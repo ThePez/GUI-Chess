@@ -1,32 +1,40 @@
 # Gui chess game
 from typing import Type
 
+ROWS = 8
+COLUMNS = 8
+
 
 class Engine:
     def __init__(self) -> None:
-        self.board: list[list] = [[None for _ in range(8)] for _ in range(8)]  # initialise the board structure
+        self.board: list[list['BasePiece | None']] | None = None
+        self.last_move: tuple[dict[str: dict[str: int]], 'BasePiece'] | None = None
+        self.king_positions: dict[str: dict[str: int]] | None = None
         self.setup_board()  # Fill the board with the pieces
 
     def setup_board(self) -> None:
+        self.board = [[None for _ in range(COLUMNS)] for _ in range(ROWS)]  # initialise the board structure
         colours: list[str] = ["white", "black"]
+        self.king_positions = {"black": {"row": 0, "column": 4}, "white": {"row": 7, "column": 4}}
+        self.last_move = None
         for colour in colours:
-            # self.place_pawns(colour)
+            self.place_pawns(colour)
             self.place_others(colour)
 
     def place_pawns(self, colour: str) -> None:
         if colour == 'white':
-            for i in range(8):
-                self.board[6][i] = Pawn((6, i), "white")
+            for i in range(COLUMNS):
+                self.board[COLUMNS - 2][i] = Pawn((COLUMNS - 2, i), "white")
 
         if colour == 'black':
-            for i in range(8):
+            for i in range(COLUMNS):
                 self.board[1][i] = Pawn((1, i), "black")
 
     def place_others(self, colour: str) -> None:
         pieces: list[Type[BasePiece]] = [Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook]
         if colour == 'white':
             for i, Piece in enumerate(pieces):
-                self.board[7][i] = Piece((7, i), "white")
+                self.board[COLUMNS - 1][i] = Piece((COLUMNS - 1, i), "white")
 
         if colour == 'black':
             for i, Piece in enumerate(pieces):
@@ -54,32 +62,95 @@ class Engine:
     def get_piece(self, row: int, col: int) -> 'BasePiece':
         return self.board[row][col]
 
-    def move_piece(self, old_position: tuple[int, int], new_position: tuple[int, int]) -> None:
+    def move_piece(self, old_position: tuple[int, int], new_position: tuple[int, int]) -> bool:
         old_row, old_col = old_position
         new_row, new_col = new_position
         if out_of_bounds(old_position) or out_of_bounds(new_position):
             print("Invalid board position!")
-            return
+            return False
 
         piece: 'BasePiece' = self.get_piece(old_row, old_col)
+        # Can't move nothing
         if piece is None:
             print("Piece not found!")
-            return
+            return False
 
-        if not piece.check_move(new_position, self.board):
+        # Check to ensure the requested move is valid
+        if not piece.check_move(new_position, self.board, last_move=self.last_move):
             print("Invalid move!")
-            return
+            return False
 
+        # Check to ensure that king's can't be captured
+        if isinstance(self.get_piece(new_row, new_col), King):
+            print("Can't capture a King!")
+            return False
+
+        # Move piece to check for King check
         self.board[old_row][old_col] = None
         self.board[new_row][new_col] = piece
+        opponent_colour = "white" if piece.colour == "black" else "black"
+        if self.is_king_in_check(opponent_colour):
+            # undo piece move
+            self.board[old_row][old_col] = piece
+            self.board[new_row][new_col] = None
+            print("Can't put your King into check! or You need to protect your king")
+            return False
+
+        # If the piece being moved was a king, need to update the variable that stores the king locations
+        if isinstance(piece, King):
+            if piece.colour == "white":
+                self.king_positions["white"] = {"row": new_row, "column": new_col}
+            else:
+                self.king_positions["black"] = {"row": new_row, "column": new_col}
+
+        # Finally update the piece's internal position and store the last move
         piece.update_position(new_position)
+        self.last_move = ({"start": {"row": old_row, "column": old_col},
+                           "end": {"row": new_row, "column": new_col}},
+                          piece)
+        return True
+
+    def is_king_in_check(self, opponent_colour: str):
+        if opponent_colour == "white":
+            king_position: tuple[int, int] = self.king_positions["black"]["row"], self.king_positions["black"]["column"]
+        else:
+            king_position: tuple[int, int] = self.king_positions["white"]["row"], self.king_positions["white"]["column"]
+
+        for row in self.board:
+            for piece in row:
+                if piece and piece.colour == opponent_colour:
+                    if piece.check_move(king_position, self.board, last_move=self.last_move):
+                        return True
+
+        return False
+
+    def is_checkmate(self) -> bool:
+        pass
+
+    def get_threats_to_king(self, king_colour: str, opponent_colour: str) -> list[dict[str: int]]:
+        threats: list[dict[str: int]] = []
+        king_position = self.king_positions[king_colour]["row"], self.king_positions[king_colour]["column"]
+        for row in self.board:
+            for piece in row:
+                if (piece and
+                        piece.colour == opponent_colour and
+                        piece.check_move(king_position, self.board, last_move=self.last_move)):
+                    row, col = piece.position
+                    threats.append({"row": row, "column": col})
+
+        return threats
+
+    def can_king_escape(self) -> bool:
+        pass
+
+    def can_piece_be_captured(self) -> bool:
+        pass
+
+    def can_check_be_blocked(self) -> bool:
+        pass
 
 
 class BasePiece:
-    """
-    White rows decrease
-    Black rows increase
-    """
     def __init__(self, position: tuple[int, int], colour: str) -> None:
         self.position = position
         self.colour = colour
@@ -90,21 +161,47 @@ class BasePiece:
 
     def update_position(self, position: tuple[int, int]) -> None:
         self.position = position
-        self.base = False
+        if self.base:
+            self.base = False
 
-    def check_move(self, new_position: tuple[int, int], board: list[list['BasePiece | None']]) -> bool:
+    def check_move(self,
+                   new_position: tuple[int, int],
+                   board: list[list['BasePiece | None']],
+                   last_move: tuple[dict[str: dict[str: int]], 'BasePiece'] | None = None) -> bool:
         """
         Check if the requested move is valid for the type of piece. Does not care if pieces are in the way. Is only
         checking if the movement is valid.
-        :param board: The game board, listing all active pieces
-        :param new_position: new row and column position
-        :return: bool
         """
         pass  # Each piece has specialised movement, thus this method is redefined in inherited classes
 
+    def capture_test(self, board: list[list['BasePiece | None']], end: tuple[int, int]) -> bool:
+        end_piece: 'BasePiece | None' = board[end[0]][end[1]]
+        if end_piece and end_piece.colour == self.colour:
+            return False  # Can't capture your own colours
+
+        # End location is either emtpy or is a valid capture. Kings are excluded elsewhere.
+        return True
+
+    def path_checking(self, board: list[list['BasePiece | None']], end: tuple[int, int]) -> bool:
+        delta_row = end[0] - self.position[0]
+        delta_col = end[1] - self.position[1]
+        step_row = 0 if delta_row == 0 else (1 if delta_row > 0 else -1)
+        step_col = 0 if delta_col == 0 else (1 if delta_col > 0 else -1)
+        current_row, current_col = self.position[0] + step_row, self.position[1] + step_col
+        # Will check the path taken by the move to ensure no pieces are blocking it. Doesn't check the final spot
+        while (current_row, current_col) != end:
+            if board[current_row][current_col] is not None:
+                return False
+            current_row, current_col = current_row + step_row, current_col + step_col
+
+        return True
+
 
 class Pawn(BasePiece):
-    def check_move(self, new_position: tuple[int, int], board: list[list['BasePiece | None']]) -> bool:
+    def check_move(self,
+                   new_position: tuple[int, int],
+                   board: list[list['BasePiece | None']],
+                   last_move: tuple[dict[str: dict[str: int]], 'BasePiece'] | None = None) -> bool:
         delta_row = new_position[0] - self.position[0]
         delta_col = new_position[1] - self.position[1]
         direction: int = 1 if self.colour == "black" else -1
@@ -121,80 +218,104 @@ class Pawn(BasePiece):
             if target_piece and target_piece.colour != self.colour and not isinstance(target_piece, King):
                 return True
 
-            # logic for en-passant
-            pass
+            if last_move:  # logic for en-passant
+                start: tuple[int, int] = last_move[0]["start"]["row"], last_move[0]["start"]["column"]
+                end: tuple[int, int] = last_move[0]["end"]["row"], last_move[0]["end"]["column"]
+                piece: 'BasePiece | None' = last_move[1]
+                if not isinstance(piece, Pawn):
+                    # Must be a Pawn
+                    return False
 
+                if abs(end[0] - start[0]) == 2 and end == (self.position[0], new_position[1]):
+                    # Pawns are adjacent
+                    board[end[0]][end[1]] = None  # Remove the captured pawn
+                    return True
+
+        # Anything else is a bad move
         return False
 
 
 class Rook(BasePiece):
-    def check_move(self, new_position: tuple[int, int], board: list[list['BasePiece | None']]) -> bool:
-        delta_row = new_position[0] - self.position[0]
-        delta_col = new_position[1] - self.position[1]
+    def check_move(self,
+                   new_position: tuple[int, int],
+                   board: list[list['BasePiece | None']],
+                   last_move: tuple[tuple[int, int], tuple[int, int], 'BasePiece'] | None = None) -> bool:
+        delta_row = abs(new_position[0] - self.position[0])
+        delta_col = abs(new_position[1] - self.position[1])
         # Can only move in straight lines
-        if not delta_col ^ delta_row or not path_checking(board, self.position, new_position):
+        if not min(delta_col, 1) ^ min(delta_row, 1):
             return False
 
-        if not capture_test(board, new_position, self):
+        if not (self.path_checking(board, new_position) and self.capture_test(board, new_position)):
             return False
 
         return True
 
 
 class Bishop(BasePiece):
-    def check_move(self, new_position: tuple[int, int], board: list[list['BasePiece | None']]) -> bool:
+    def check_move(self,
+                   new_position: tuple[int, int],
+                   board: list[list['BasePiece | None']],
+                   last_move: tuple[tuple[int, int], tuple[int, int], 'BasePiece'] | None = None) -> bool:
         delta_row = abs(new_position[0] - self.position[0])
         delta_col = abs(new_position[1] - self.position[1])
         # Can only move in diagonals
-        if delta_row != delta_col or not path_checking(board, self.position, new_position):
+        if delta_row != delta_col:
             return False
 
-        if not capture_test(board, new_position, self):
+        if not (self.path_checking(board, new_position) and self.capture_test(board, new_position)):
             return False
 
         return True
 
 
 class Knight(BasePiece):
-    def check_move(self, new_position: tuple[int, int], board: list[list['BasePiece | None']]) -> bool:
+    def check_move(self,
+                   new_position: tuple[int, int],
+                   board: list[list['BasePiece | None']],
+                   last_move: tuple[tuple[int, int], tuple[int, int], 'BasePiece'] | None = None) -> bool:
         delta_row = abs(new_position[0] - self.position[0])
         delta_col = abs(new_position[1] - self.position[1])
+        # L shaped movement, not path checking as knight jump other pieces
         if not ((delta_row == 2 and delta_col == 1) or (delta_row == 1 and delta_col == 2)):
             return False
 
-        if not capture_test(board, new_position, self):
+        if not self.capture_test(board, new_position):
             return False
 
         return True
 
 
 class Queen(BasePiece):
-    def check_move(self, new_position: tuple[int, int], board: list[list['BasePiece | None']]) -> bool:
+    def check_move(self,
+                   new_position: tuple[int, int],
+                   board: list[list['BasePiece | None']],
+                   last_move: tuple[tuple[int, int], tuple[int, int], 'BasePiece'] | None = None) -> bool:
         delta_row = abs(new_position[0] - self.position[0])
         delta_col = abs(new_position[1] - self.position[1])
+        # Check the actual move... is it a valid movement?
         # Diagonals or straight lines only
-        if not (delta_row == delta_col or delta_row ^ delta_col):
+        if not (delta_row == delta_col or min(delta_row, 1) ^ min(delta_col, 1)):
             return False
 
-        if not path_checking(board, self.position, new_position):
+        # Check the path taken, and if a capture is possible
+        if not (self.path_checking(board, new_position) and self.capture_test(board, new_position)):
             return False
 
-        if not capture_test(board, new_position, self):
-            return False
-
+        # Checks passed -> valid move
         return True
 
 
 class King(BasePiece):
-    def check_move(self, new_position: tuple[int, int], board: list[list['BasePiece | None']]) -> bool:
+    def check_move(self,
+                   new_position: tuple[int, int],
+                   board: list[list['BasePiece | None']],
+                   last_move: tuple[tuple[int, int], tuple[int, int], 'BasePiece'] | None = None) -> bool:
         delta_row = abs(new_position[0] - self.position[0])
         delta_col = abs(new_position[1] - self.position[1])
         # Only one square at a time
         # Diagonals or straight lines only
-        if not max(delta_row, delta_col) == 1:
-            return False
-
-        if not capture_test(board, new_position, self):
+        if not (max(delta_row, delta_col) == 1 and self.capture_test(board, new_position)):
             return False
 
         return True
@@ -205,43 +326,23 @@ def out_of_bounds(position: tuple[int, int]) -> bool:
     return x < 0 or x > 7 or y < 0 or y > 7
 
 
-def path_checking(board: list[list['BasePiece | None']], start: tuple[int, int], end: tuple[int, int]) -> bool:
-    """
-    Checks the path until the final spot. Final spot will need different logic.
-    :param board:
-    :param start:
-    :param end:
-    :return:
-    """
-    delta_row = end[0] - start[0]
-    delta_col = end[1] - start[1]
-    step_row = 0 if delta_row == 0 else (1 if delta_row > 0 else -1)
-    step_col = 0 if delta_col == 0 else (1 if delta_col > 0 else -1)
-    current_row, current_col = start[0] + step_row, start[1] + step_col
-    while (current_row, current_col) != end:
-        if board[current_row][current_col] is not None:
-            return False
-        current_row, current_col = current_row + step_row, current_col + step_col
-
-    return True
-
-
-def capture_test(board: list[list['BasePiece | None']], end: tuple[int, int], active_piece: 'BasePiece') -> bool:
-    end_piece: 'BasePiece | None' = board[end[0]][end[1]]
-    if end_piece is None:
-        return True
-
-    if end_piece.colour == active_piece.colour or isinstance(end_piece, King):
-        return False  # Can't capture your own colours or capture a King
-
-    return True  # Valid move
-
-
 def main_testing(engine: Engine) -> None:
-    engine.move_piece((0, 1), (2, 0))  # Knight
-    engine.print_board()
-    engine.move_piece((0, 3), (7, 3))  # Queen
-    engine.print_board()
+    while True:
+        engine.print_board()
+        start = input("Start position as row col:").split()
+        end = input("End position as row col:").split()
+        # a = 97
+        start_row = 8 - int(start[0])
+        start_col = ord(start[1].lower()) - ord("a")
+        start_pos = start_row, start_col
+        end_row = 8 - int(end[0])
+        end_col = ord(end[1].lower()) - ord("a")
+        end_pos = end_row, end_col
+        engine.move_piece(start_pos, end_pos)
+        if engine.is_king_in_check('white'):
+            print("Black King is in check")
+        if engine.is_king_in_check('black'):
+            print("White King is in check")
 
 
 if __name__ == '__main__':
