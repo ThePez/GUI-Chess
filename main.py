@@ -66,18 +66,19 @@ class Engine:
         old_row, old_col = old_position
         new_row, new_col = new_position
         if out_of_bounds(old_position) or out_of_bounds(new_position):
-            print("Invalid board position!")
+            # print("Invalid board position!")
             return False
 
-        piece: 'BasePiece' = self.get_piece(old_row, old_col)
+        piece: BasePiece = self.get_piece(old_row, old_col)
+        target_piece: BasePiece | None = self.get_piece(new_row, new_col)
         # Can't move nothing
         if piece is None:
-            print("Piece not found!")
+            # print("Piece not found!")
             return False
 
         # Check to ensure the requested move is valid
         if not piece.check_move(new_position, self.board, last_move=self.last_move):
-            print("Invalid move!")
+            # print("Invalid move!")
             return False
 
         # Check to ensure that king's can't be captured
@@ -88,32 +89,38 @@ class Engine:
         # Move piece to check for King check
         self.board[old_row][old_col] = None
         self.board[new_row][new_col] = piece
-        opponent_colour = "white" if piece.colour == "black" else "black"
-        if self.is_king_in_check(opponent_colour):
-            # undo piece move
-            self.board[old_row][old_col] = piece
-            self.board[new_row][new_col] = None
-            print("Can't put your King into check! or You need to protect your king")
-            return False
-
+        piece.update_position(new_position)
         # If the piece being moved was a king, need to update the variable that stores the king locations
         if isinstance(piece, King):
-            if piece.colour == "white":
-                self.king_positions["white"] = {"row": new_row, "column": new_col}
-            else:
-                self.king_positions["black"] = {"row": new_row, "column": new_col}
+            king_position = {"row": new_row, "column": new_col}
+            self.king_positions[piece.colour] = king_position
 
-        # Finally update the piece's internal position and store the last move
-        piece.update_position(new_position)
+        temp_last_move = self.last_move
         self.last_move = ({"start": {"row": old_row, "column": old_col},
                            "end": {"row": new_row, "column": new_col}},
                           piece)
+
+        if self.is_king_in_check(piece.colour):
+            # undo piece move
+            self.board[old_row][old_col] = piece
+            piece.update_position(old_position)
+            self.board[new_row][new_col] = target_piece
+            self.last_move = temp_last_move
+            if isinstance(piece, King):
+                king_position = {"row": old_row, "column": old_col}
+                self.king_positions[piece.colour] = king_position
+
+            print("Can't put your King into check! or You need to protect your king")
+            return False
+
         return True
 
-    def is_king_in_check(self, opponent_colour: str):
-        if opponent_colour == "white":
+    def is_king_in_check(self, king_colour: str):
+        if king_colour == "black":
+            opponent_colour = "white"
             king_position: tuple[int, int] = self.king_positions["black"]["row"], self.king_positions["black"]["column"]
         else:
+            opponent_colour = "black"
             king_position: tuple[int, int] = self.king_positions["white"]["row"], self.king_positions["white"]["column"]
 
         for row in self.board:
@@ -125,29 +132,123 @@ class Engine:
         return False
 
     def is_checkmate(self) -> bool:
-        pass
+        colours: list[str] = ["white", "black"]
+        for colour in colours:
+            threats: list[dict[str: tuple[int, int]]] = self.get_threats_to_king(colour)
+            if len(threats) == 0:
+                # No threats to this coloured king, so move on to other colour
+                continue
 
-    def get_threats_to_king(self, king_colour: str, opponent_colour: str) -> list[dict[str: int]]:
-        threats: list[dict[str: int]] = []
+            can_escape: bool = self.can_king_escape(colour)
+            if len(threats) >= 2 and can_escape:
+                continue
+
+            can_block: bool = self.can_check_be_blocked(colour, threats)
+            # can_block = False
+            can_capture: bool = self.can_piece_be_captured(colour, threats)
+            if can_block or can_capture or can_escape:
+                continue
+
+            # Unable to be blocked or piece captured -> King is checkmated
+            return True
+
+        # Either no threats found of preventable threats found -> not checkmate
+        return False
+
+    def get_threats_to_king(self, king_colour: str) -> list[dict[str: tuple[int, int]]]:
+        threats: list[dict[str: tuple[int, int]]] = []
         king_position = self.king_positions[king_colour]["row"], self.king_positions[king_colour]["column"]
-        for row in self.board:
-            for piece in row:
-                if (piece and
-                        piece.colour == opponent_colour and
-                        piece.check_move(king_position, self.board, last_move=self.last_move)):
+        opponent_colour: str = "white" if king_colour == "black" else "black"
+        for row_pieces in self.board:
+            for piece in row_pieces:
+                if (piece and piece.colour == opponent_colour
+                        and piece.check_move(king_position, self.board, last_move=self.last_move)):
                     row, col = piece.position
-                    threats.append({"row": row, "column": col})
+                    threats.append({"start": (row, col), "end": king_position})
 
         return threats
 
-    def can_king_escape(self) -> bool:
-        pass
+    def can_king_escape(self, king_colour: str) -> bool:
+        moves: list[tuple[int, int]] = [(1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1)]
+        king_position = self.king_positions[king_colour]
+        king_row: int = king_position["row"]
+        king_col: int = king_position["column"]
+        king_piece: BasePiece = self.get_piece(king_row, king_col)
+        for move in moves:
+            new_row, new_col = king_row + move[0], king_col + move[1]
+            if out_of_bounds((new_row, new_col)):
+                continue
+            target_piece: BasePiece | None = self.get_piece(new_row, new_col)
+            if self.move_piece((king_row, king_col), (new_row, new_col)):
+                # valid move -> undo the move and return true
+                self.board[king_row][king_col] = king_piece
+                self.board[new_row][new_col] = target_piece
+                self.king_positions[king_colour] = king_position
+                king_piece.update_position((king_row, king_col))
+                return True
 
-    def can_piece_be_captured(self) -> bool:
-        pass
+        return False
 
-    def can_check_be_blocked(self) -> bool:
-        pass
+    def can_piece_be_captured(self, king_colour: str, threats: list[dict[str: tuple[int, int]]]) -> bool:
+        for threat in threats:
+            for row_pieces in self.board:
+                for piece in row_pieces:
+                    if piece and piece.colour == king_colour:
+                        king_position: dict[str: int] = self.king_positions[king_colour]
+                        initial_position: tuple[int, int] = piece.position
+                        target_position: tuple[int, int] = threat["start"]
+                        target_piece: BasePiece | None = self.get_piece(target_position[0], target_position[1])
+                        if self.move_piece(initial_position, target_position):
+                            # Found a valid move -> undo it and return True
+                            self.board[initial_position[0]][initial_position[1]] = piece
+                            piece.update_position(initial_position)
+                            self.board[target_position[0]][target_position[1]] = target_piece
+                            self.king_positions[king_colour] = king_position
+                            return True
+
+        return False
+
+    def can_check_be_blocked(self, king_colour: str, threats: list[dict[str: tuple[int, int]]]) -> bool:
+        # threats has start: row, col and end: row, col
+        # check if piece attacking is knight (as this can't be blocked)
+        # work out change in rows and cols
+        # store the list of these positions and find out if any piece can move into these spots
+        # threats should be of length 1 here... I hope
+        threat = threats[0]
+        threat_start: tuple[int, int] = threat["start"]
+        if isinstance(self.get_piece(threat_start[0], threat_start[1]), Knight):
+            # Can't block a knight's attack
+            return False
+
+        threat_end: tuple[int, int] = threat["end"]
+        delta_row = threat_end[0] - threat_start[0]
+        delta_col = threat_end[1] - threat_start[1]
+        step_row = 0 if delta_row == 0 else (1 if delta_row > 0 else -1)
+        step_col = 0 if delta_col == 0 else (1 if delta_col > 0 else -1)
+        block_squares: list[tuple[int, int]] = []
+        current_row, current_col = threat_start[0] + step_row, threat_start[1] + step_col
+        while (current_row, current_col) != threat_end:
+            block_squares.append((current_row, current_col))
+            current_row += step_row
+            current_col += step_col
+
+        # now have the potential spaces to try and move pieces into
+        for position in block_squares:
+            for row_pieces in self.board:
+                for piece in row_pieces:
+                    if piece and piece.colour == king_colour:
+                        king_position: dict[str: int] = self.king_positions[king_colour]
+                        initial_position: tuple[int, int] = piece.position
+                        target_piece: BasePiece | None = self.get_piece(position[0], position[1])
+                        if self.move_piece(initial_position, position):
+                            # Found a valid move -> undo it and return True
+                            self.board[initial_position[0]][initial_position[1]] = piece
+                            piece.update_position(initial_position)
+                            self.board[position[0]][position[1]] = target_piece
+                            self.king_positions[king_colour] = king_position
+                            return True
+
+        return False
 
 
 class BasePiece:
@@ -215,7 +316,7 @@ class Pawn(BasePiece):
         if abs(delta_col) == 1 and delta_row == direction:  # Capturing
             target_piece: 'BasePiece | None' = board[new_position[0]][new_position[1]]
             # Normal Capture
-            if target_piece and target_piece.colour != self.colour and not isinstance(target_piece, King):
+            if target_piece and target_piece.colour != self.colour:
                 return True
 
             if last_move:  # logic for en-passant
@@ -332,17 +433,39 @@ def main_testing(engine: Engine) -> None:
         start = input("Start position as row col:").split()
         end = input("End position as row col:").split()
         # a = 97
-        start_row = 8 - int(start[0])
-        start_col = ord(start[1].lower()) - ord("a")
-        start_pos = start_row, start_col
-        end_row = 8 - int(end[0])
-        end_col = ord(end[1].lower()) - ord("a")
-        end_pos = end_row, end_col
-        engine.move_piece(start_pos, end_pos)
-        if engine.is_king_in_check('white'):
-            print("Black King is in check")
-        if engine.is_king_in_check('black'):
-            print("White King is in check")
+        try:
+            start_row = 8 - int(start[0])
+            start_col = ord(start[1].lower()) - ord("a")
+            start_pos = start_row, start_col
+            end_row = 8 - int(end[0])
+            end_col = ord(end[1].lower()) - ord("a")
+            end_pos = end_row, end_col
+        except (ValueError, IndexError, TypeError):
+            print("Wrong input, try again")
+            continue
+
+        if not engine.move_piece(start_pos, end_pos):
+            print("Bad move, try again...")
+
+        if engine.is_checkmate():
+            colour: str = "White" if engine.is_king_in_check('white') else "Black"
+            print(f"{colour} King has been checkmated, game over.")
+            break
+
+        if engine.is_king_in_check("white"):
+            print("White King is in Check")
+
+        if engine.is_king_in_check("black"):
+            print("Black King is in Check")
+
+    user_input: str = input("Play again? (Yes/No) ")
+    user_input.lower()
+    if user_input == "yes":
+        engine.setup_board()
+        main_testing(engine)
+    else:
+        print("Goodbye!")
+        return
 
 
 if __name__ == '__main__':
