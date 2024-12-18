@@ -2,10 +2,10 @@
 from typing import Type
 import sys
 from contextlib import contextmanager
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QMainWindow, QMessageBox, QFrame, QHBoxLayout)
+    QApplication, QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton, QMainWindow, QMessageBox, QFrame, QHBoxLayout)
 
 ROWS = 8
 COLUMNS = 8
@@ -30,7 +30,9 @@ class ViewController(QMainWindow):
         self.turn_label.setFont(QFont("Arial", 14, QFont.Bold))
         self.turn_label.setAlignment(Qt.AlignCenter)
         self.turn_label.setStyleSheet(
-            "background-color: lightgray; padding: 5px; border: 1px solid black; border-radius: 5px; color: black;"
+            "background-color: lightgray; "
+            "padding: 5px; border: 1px solid black; "
+            "border-radius: 5px; color: black;"
         )
 
         restart_button = QPushButton("Restart")
@@ -80,7 +82,7 @@ class ViewController(QMainWindow):
             "White Rook": "./icons/white-rook.png",
             "Black Rook": "./icons/black-rook.png",
             "White Bishop": "./icons/white-bishop.png",
-            "Black Bishop": "./icons/black-bishop.png",
+            "Black Bishop": "./icons/black-bishop.png"
         }
         self.first_button_press: tuple[int, int] | None = None
         self.board_buttons: list[list[QPushButton]] = []
@@ -102,11 +104,6 @@ class ViewController(QMainWindow):
         self._engine.check_warning.connect(self.king_in_check)
         # Pawn Promotion signals
         self._engine.promote_pawn_signal.connect(self.get_promotion_choice)
-
-        # self.promotion_choice.connect(self._engine.promote_pawn)
-        # self.attempt_move.connect(self._engine.attempt_move)
-        # self.check_check.connect(self._engine.check_for_check)
-        # self.game_setup.connect(self._engine.setup_game)
 
     def add_board_labels(self) -> None:
         # Add row labels (1–8) on the left and right
@@ -303,10 +300,8 @@ class ViewController(QMainWindow):
         self.game_over("Black has resigned.")
 
 
-
 class Engine(QObject):
     suppress_errors = False
-
     # Signals
     checkmate = pyqtSignal(str)
     stalemate = pyqtSignal(str)
@@ -436,8 +431,6 @@ class Engine(QObject):
                 return False
 
         # Checks have passed, now move both pieces
-        # self._move_piece(rook_position, (row, rook_target_col))
-        # self._move_piece(king_position, target_position)
         return True
 
     def en_passant_test(self, start_position: tuple[int, int], target_position: tuple[int, int]) -> bool:
@@ -578,7 +571,8 @@ class Engine(QObject):
 
         if isinstance(piece, King):
             delta_col = abs(target_col - start_col)
-            if delta_col == 2 and self.castling_checker(piece.colour, target_position):
+            delta_row = abs(target_row - start_row)
+            if delta_row == 0 and delta_col == 2 and self.castling_checker(piece.colour, target_position):
                 return 3
 
         if isinstance(piece, Pawn):
@@ -667,7 +661,7 @@ class Engine(QObject):
                 continue
 
             # Unable to be blocked or piece captured -> King is checkmated
-            self.game_over.emit(f"{colour.capitalize()}'s King is checkmated. Game Over.")
+            self.checkmate.emit(f"{colour.capitalize()}'s King is checkmated. Game Over.")
             return True
 
         # Either no threats found of preventable threats found -> not checkmate
