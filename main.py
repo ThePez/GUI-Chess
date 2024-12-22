@@ -4,15 +4,22 @@ import sys
 from contextlib import contextmanager
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject
 from PyQt5.QtGui import QFont, QIcon
-from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton, QMainWindow, QMessageBox, QFrame, QHBoxLayout)
+from PyQt5.QtWidgets import (QApplication, QWidget, QGridLayout,
+                             QLabel, QPushButton, QMainWindow,
+                             QMessageBox, QFrame, QHBoxLayout)
 
 ROWS = 8
 COLUMNS = 8
 
 
 class ViewController(QMainWindow):
+    """
+    Class the controls all aspects of the UI
+    """
     def __init__(self):
+        """
+        Method to initialise the UI
+        """
         super().__init__()
         # Set up the main window properties
         self.setWindowTitle("Chess by Jack :)")
@@ -37,36 +44,53 @@ class ViewController(QMainWindow):
 
         restart_button = QPushButton("Restart")
         restart_button.setFont(QFont("Arial", 12, QFont.Bold))
-        restart_button.clicked.connect(self.restart_game)
+        restart_button.clicked.connect(self.restart_game)  # type: ignore
 
         white_resign_button = QPushButton("White Resign")
         white_resign_button.setFont(QFont("Arial", 12, QFont.Bold))
-        white_resign_button.clicked.connect(self.white_resigned)
+        white_resign_button.clicked.connect(self.white_resigned)  # type: ignore
 
         black_resign_button = QPushButton("Black Resign")
         black_resign_button.setFont(QFont("Arial", 12, QFont.Bold))
-        black_resign_button.clicked.connect(self.black_resigned)
+        black_resign_button.clicked.connect(self.black_resigned)  # type: ignore
+
         resign_layout = QHBoxLayout()
         resign_layout.addWidget(white_resign_button)
         resign_layout.addWidget(black_resign_button)
 
         # Chessboard container
         self.board_container = QFrame()
+        self.board_container.setFixedSize(900, 900)
         self.board_container.setFrameShape(QFrame.Box)
         self.board_container.setStyleSheet("border: 2px solid black; background-color: white;")
         self.board_layout = QGridLayout()
         self.board_layout.setSpacing(0)  # No gaps between buttons
         self.board_container.setLayout(self.board_layout)
-
         # Add row and column labels
         self.add_board_labels()
 
+        # Containers for captured pieces
+        self.white_captured = QGridLayout()
+        self.black_captured = QGridLayout()
+        self.captured_pieces: dict[str: list[QLabel]] = {"white": [], "black": []}
+        for i in range(16):
+            self.captured_pieces["white"].append(QLabel())
+            self.captured_pieces["black"].append(QLabel())
+            if i < 8:
+                self.white_captured.addWidget(self.captured_pieces["white"][i], i, 1)
+                self.black_captured.addWidget(self.captured_pieces["black"][i], i, 1)
+            else:
+                self.white_captured.addWidget(self.captured_pieces["white"][i], i - 8, 0)
+                self.black_captured.addWidget(self.captured_pieces["black"][i], i - 8, 0)
+
         # Set up the layout for the main window
-        main_layout = QVBoxLayout()
-        main_layout.addWidget(restart_button)
-        main_layout.addWidget(self.turn_label)
-        main_layout.addLayout(resign_layout)
-        main_layout.addWidget(self.board_container)
+        main_layout = QGridLayout()
+        main_layout.addWidget(restart_button, 0, 0, 1, 3)
+        main_layout.addWidget(self.turn_label, 1, 0, 1, 3)
+        main_layout.addLayout(resign_layout, 2, 0, 1, 3)
+        main_layout.addLayout(self.black_captured, 3, 0, 1, 1)
+        main_layout.addWidget(self.board_container, 3, 1, 1, 1)
+        main_layout.addLayout(self.white_captured, 3, 2, 1, 1)
         self.central_widget.setLayout(main_layout)
 
         # Variables used for running the game
@@ -93,19 +117,25 @@ class ViewController(QMainWindow):
         self.setup_signals()
 
     def setup_signals(self) -> None:
+        """
+        Method to connect signals from the engine to the required methods in the view controller
+        """
         # Game ending Signals
-        self._engine.checkmate.connect(self.game_over)
-        self._engine.stalemate.connect(self.game_over)
-        self._engine.insufficient.connect(self.game_over)
+        self._engine.checkmate.connect(self.game_over)  # type: ignore
+        self._engine.stalemate.connect(self.game_over)  # type: ignore
+        self._engine.insufficient.connect(self.game_over)  # type: ignore
         # Player move signals
-        self._engine.move_successful.connect(self.move_successful)
-        self._engine.invalid_move.connect(self.move_failed)
+        self._engine.move_successful.connect(self.move_successful)  # type: ignore
+        self._engine.invalid_move.connect(self.move_failed)  # type: ignore
         # Check signal
-        self._engine.check_warning.connect(self.king_in_check)
+        self._engine.check_warning.connect(self.king_in_check)  # type: ignore
         # Pawn Promotion signals
-        self._engine.promote_pawn_signal.connect(self.get_promotion_choice)
+        self._engine.promote_pawn_signal.connect(self.get_promotion_choice)  # type: ignore
 
     def add_board_labels(self) -> None:
+        """
+        Method to add the board labels
+        """
         # Add row labels (1–8) on the left and right
         for row in range(ROWS):
             # Left-side row label
@@ -162,30 +192,64 @@ class ViewController(QMainWindow):
             col_label_clone.setFixedSize(100, 50)
             self.board_layout.addWidget(col_label_clone, ROWS + 1, col + 1)
 
+    def update_captured_sections(self) -> None:
+        """
+        Method to update te captures pieces sections. As each player captures pieces, this section will render the
+        relevant icons in a bottom up view. Uses an index error to clear unused labels of their icon.
+        """
+        for number in range(16):
+            i: int = 15 - number  # Zero indexed
+            white_label = self.captured_pieces["white"][i]
+            black_label = self.captured_pieces["black"][i]
+            try:
+                piece: BasePiece = self._engine.captured["white"][number]
+                white_label.setPixmap(QIcon(self.icons[str(piece)]).pixmap(80, 80))
+            except IndexError:
+                white_label.clear()
+
+            try:
+                piece: BasePiece = self._engine.captured["black"][number]
+                black_label.setPixmap(QIcon(self.icons[str(piece)]).pixmap(80, 80))
+            except IndexError:
+                black_label.clear()
+
     def move_successful(self) -> None:
+        """
+        Method used when the engine successfully completes a valid move. Will update the board buttons, the captured
+        piece sections and the turn label. Method is called using the signal and slots system.
+        """
         self._engine.promote_checker()
         self.update_buttons()
+        self.update_captured_sections()
         current_colour: str = self._engine.turn_checker()
         self.turn_label.setText(f"{current_colour.capitalize()}'s Turn")  # Update the turn label
         self._engine.check_for_check(current_colour)
 
     def move_failed(self, message: str) -> None:
+        """
+        Method called when the engine fails a move.
+        :param message: why the move failed
+        """
         self.update_buttons()
+        self.update_captured_sections()
         QMessageBox.critical(self, "Move Failed", f"{message}")
 
     def get_promotion_choice(self, colour: str, position: tuple[int, int]) -> None:
+        """
+        Method used to choose the promotion choice.
+        :param colour: of the pawn being promoted
+        :param position: of the pawn on the board
+        :return:
+        """
         dialog = QMessageBox()
         dialog.setWindowTitle("Pawn Promotion")
-        # row, col = convert_position(position)
         dialog.setText(f"{colour.capitalize()} pawn can be promoted. Choose a piece:")
         dialog.setIcon(QMessageBox.Question)
-
         # Add buttons for each piece
         queen_button = dialog.addButton("Queen", QMessageBox.AcceptRole)
         rook_button = dialog.addButton("Rook", QMessageBox.AcceptRole)
         bishop_button = dialog.addButton("Bishop", QMessageBox.AcceptRole)
         knight_button = dialog.addButton("Knight", QMessageBox.AcceptRole)
-
         # Execute the dialog and determine the choice
         dialog.exec_()
 
@@ -201,31 +265,35 @@ class ViewController(QMainWindow):
         else:
             choice = 1  # Default to Queen
 
-        # Emit the promotion signal
+        # Promote the pawn
         self._engine.promote_pawn(choice, position, colour)
 
     def king_in_check(self, message: str) -> None:
+        """
+        Notification for when a king is in check.
+        :param message: Check message sent by the engine
+        """
         QMessageBox.critical(self, "King in Check", f"{message}")
 
     def game_over(self, message: str) -> None:
+        """
+        Method to notify the players that the game is over.
+        :param message: Message sent by the engine when the game ended
+        """
         msg_box = QMessageBox()
         msg_box.setWindowTitle("Game Over")
         msg_box.setText(message)
         msg_box.setIcon(QMessageBox.Information)
-
         # Add custom buttons
         play_again = msg_box.addButton("Play Again", QMessageBox.YesRole)
         quit_game = msg_box.addButton("Quit", QMessageBox.NoRole)
-
         # Execute the dialog
         msg_box.exec_()
 
         # Handle the player's choice
         if msg_box.clickedButton() == play_again:
             print("Starting a new game...")
-            self._engine.setup_game()
-            # self.game_setup.emit()
-            self.update_buttons()
+            self.restart_game()
         elif msg_box.clickedButton() == quit_game:
             print("Exiting the game...")
             self.close()
@@ -237,7 +305,7 @@ class ViewController(QMainWindow):
                 button = QPushButton()
                 row_buttons.append(button)
                 button.setFixedSize(100, 100)
-                button.clicked.connect(lambda _, x=row, y=col: self.handle_board_buttons(x, y))
+                button.clicked.connect(lambda _, x=row, y=col: self.handle_board_buttons(x, y))  # type: ignore
                 self.board_layout.addWidget(button, row + 1, col + 1)
 
             self.board_buttons.append(row_buttons)
@@ -292,6 +360,7 @@ class ViewController(QMainWindow):
         self._engine.setup_game()
         self.turn_label.setText("White's Turn")  # Update the turn label
         self.update_buttons()
+        self.update_captured_sections()
 
     def white_resigned(self) -> None:
         self.game_over("White as resigned.")
@@ -317,6 +386,8 @@ class Engine(QObject):
         self.last_move: tuple[dict[str: tuple[int, int]], BasePiece] | None = None
         self.king_positions: dict[str: tuple[int, int]] | None = None
         self.players: list[str] = ["white", "black"]
+        self.captured: dict[str: list[BasePiece]] | None = None
+
         # Fill the board with the pieces
         self.setup_game()
 
@@ -325,6 +396,7 @@ class Engine(QObject):
         self.board = [[None for _ in range(COLUMNS)] for _ in range(ROWS)]  # initialise the board structure
         self.king_positions = {"black": (0, 4), "white": (7, 4)}
         self.last_move = None
+        self.captured = {"white": [], "black": []}
         for colour in colours:
             self.place_pieces(colour, is_pawn=False)  # Place other pieces
             self.place_pieces(colour, is_pawn=True)  # Place pawns
@@ -399,7 +471,7 @@ class Engine(QObject):
                 if piece and isinstance(piece, Pawn):
                     row, col = piece.position
                     if (piece.colour == "white" and row == 0) or (piece.colour == "black" and row == 7):
-                        self.promote_pawn_signal.emit(piece.colour, piece.position)
+                        self.promote_pawn_signal.emit(piece.colour, piece.position)  # type: ignore
 
     def castling_checker(self, colour: str, target_position: tuple[int, int]) -> bool:
         king_position: tuple[int, int] = self.king_positions[colour]
@@ -471,6 +543,10 @@ class Engine(QObject):
 
     def en_passant_move(self, start_position: tuple[int, int], target_position: tuple[int, int]) -> None:
         self._move_piece(start_position, target_position)
+        target_pawn: BasePiece | None = self.get_piece(start_position[0], target_position[1])
+        if target_pawn:
+            self.captured[target_pawn.colour].append(target_pawn)
+
         self.board[start_position[0]][target_position[1]] = None
 
     def _move_piece(self, start_position: tuple[int, int], target_position: tuple[int, int]) -> None:
@@ -478,12 +554,16 @@ class Engine(QObject):
         start_row, start_col = start_position
         end_row, end_col = target_position
         piece: BasePiece = self.get_piece(start_row, start_col)
+        target_piece: BasePiece | None = self.get_piece(end_row, end_col)
         self.board[start_row][start_col] = None
         self.board[end_row][end_col] = piece
         piece.update_position(target_position)
         self.last_move = ({"start": start_position, "end": target_position}, piece)
         if isinstance(piece, King):
             self.king_positions[piece.colour] = target_position
+
+        if target_piece:
+            self.captured[target_piece.colour].append(target_piece)
 
     def check_test(self, start_position: tuple[int, int], target_position: tuple[int, int]) -> bool:
         start_row, start_col = start_position
@@ -506,15 +586,15 @@ class Engine(QObject):
             return
 
         if self.is_stalemate():
-            self.stalemate.emit("Game drawn by stalemate...")
+            self.stalemate.emit("Game drawn by stalemate...")  # type: ignore
             return
 
         if self.is_insufficient_pieces():
-            self.insufficient.emit("Game drawn by insufficient pieces to form a checkmate.")
+            self.insufficient.emit("Game drawn by insufficient pieces to form a checkmate.")  # type: ignore
             return
 
         if self.is_king_in_check(king_colour):
-            self.check_warning.emit(f"{king_colour.capitalize()}'s King is in check.")
+            self.check_warning.emit(f"{king_colour.capitalize()}'s King is in check.")  # type: ignore
 
     def is_king_in_check(self, king_colour: str):
         king_position: tuple[int, int] = self.king_positions[king_colour]
@@ -546,7 +626,7 @@ class Engine(QObject):
             self._move_piece(rook_position, (start_position[0], rook_col))
             self._move_piece(start_position, target_position)
 
-        self.move_successful.emit(start_position, target_position)
+        self.move_successful.emit(start_position, target_position)  # type: ignore
 
     def validate_move(self, start_position: tuple[int, int], target_position: tuple[int, int]) -> int:
         # have this return an int. 0 = fail, 1 = normal move, 2 = en-passant, 3 = castling
@@ -661,7 +741,7 @@ class Engine(QObject):
                 continue
 
             # Unable to be blocked or piece captured -> King is checkmated
-            self.checkmate.emit(f"{colour.capitalize()}'s King is checkmated. Game Over.")
+            self.checkmate.emit(f"{colour.capitalize()}'s King is checkmated. Game Over.")  # type: ignore
             return True
 
         # Either no threats found of preventable threats found -> not checkmate
@@ -776,7 +856,7 @@ class Engine(QObject):
 
     def emit_invalid_move_signal(self, message: str) -> None:
         if not self.suppress_errors:
-            self.invalid_move.emit(message)
+            self.invalid_move.emit(message)  # type: ignore
 
 
 class BasePiece:
